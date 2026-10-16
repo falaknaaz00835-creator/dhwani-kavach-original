@@ -13,4 +13,6 @@ torch
 torchaudio
 flask
 gunicorn
-flask
+# ── TinyFish threat-verification integration ──────────────────────────────────
+tinyfish
+python-dotenv

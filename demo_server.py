@@ -104,6 +104,15 @@ try:
 except ImportError:
     print("CORS: flask-cors not installed - other devices may be blocked")
 
+# ── TinyFish threat-verifier (parallel / non-blocking) ───────────────────────
+try:
+    from services.threat_verifier import verify_async, get_result as _tf_get
+    _TINYFISH_HOOKED = True
+    print("[OK] TinyFish threat-verifier loaded: background fraud-registry checks enabled")
+except Exception as _tf_err:
+    _TINYFISH_HOOKED = False
+    print(f"[WARN] TinyFish threat-verifier not loaded: {_tf_err}")
+
 
 def score_audio(y):
     piece = fix_length(np.asarray(y, dtype=np.float32), int(SECONDS * SR))
@@ -259,7 +268,21 @@ def api_score():
             p = 1.0 / (1.0 + math.exp(-(math.log(q / (1.0 - q)) + bias)))
             r = engine.update(p, vfrac * SECONDS)
         pol = policy_for(r["tier"])
-        return jsonify({
+
+        # ── TinyFish parallel check (non-blocking) ────────────────────────────
+        # Fire the web fraud-registry lookup in the background so it NEVER
+        # delays the primary inference response.  The job_id is included in
+        # the payload; the frontend may poll /api/tinyfish/result?job=<id>.
+        tf_job_id = None
+        if _TINYFISH_HOOKED and r.get("tier") in ("MEDIUM", "HIGH"):
+            try:
+                caller_num = (request.get_json(silent=True) or {}).get("caller_number", "")
+                tf_job_id = verify_async(caller_number=str(caller_num))
+            except Exception as _tf_ex:
+                pass  # background check failing must never affect primary verdict
+        # ─────────────────────────────────────────────────────────────────────
+
+        resp = {
             "window_p": round(r["window_p"], 4),
             "call_p": round(r["call_p"], 4),
             "tier": r["tier"],
@@ -270,7 +293,10 @@ def api_score():
             "step_up": pol["step_up"],
             "allow_sensitive": pol["allow_sensitive_action"],
             "model": MODEL_NAME,
-        })
+        }
+        if tf_job_id:
+            resp["tinyfish_job_id"] = tf_job_id
+        return jsonify(resp)
     except Exception as e:
         return jsonify({"error": str(e)})
 

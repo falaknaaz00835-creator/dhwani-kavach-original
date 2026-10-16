@@ -9,6 +9,14 @@ import time
 
 from flask import Blueprint, jsonify, request
 
+# ── TinyFish result lookup (non-blocking async check, see services/threat_verifier.py)
+try:
+    from services.threat_verifier import get_result as _tf_get_result
+    _TF_AVAILABLE = True
+except Exception:
+    _tf_get_result = None
+    _TF_AVAILABLE = False
+
 bp = Blueprint("defense_api", __name__)
 
 MODEL_META = {
@@ -289,3 +297,38 @@ def challenge_token():
         "anti_replay": "a pre-recorded clip cannot contain a token generated after the call started",
         "issued_at": time.strftime("%Y-%m-%dT%H:%M:%S+05:30"),
     })
+
+
+# ── TinyFish async result endpoint ───────────────────────────────────────────
+
+@bp.route("/api/tinyfish/result", methods=["GET"])
+def tinyfish_result():
+    """
+    Poll for a previously-dispatched TinyFish fraud-registry check.
+
+    Query params
+    ------------
+    job : str
+        The ``tinyfish_job_id`` returned by /api/score for MEDIUM/HIGH tiers.
+
+    Response
+    --------
+    pending  → {"status": "pending"}
+    done     → {"status": "done",    "result": { … }}
+    error    → {"status": "error",   "reason": "…"}
+    """
+    if not _TF_AVAILABLE:
+        return jsonify({
+            "status": "unavailable",
+            "reason": "TinyFish verifier not loaded (see server logs)",
+        }), 503
+
+    job_id = request.args.get("job", "").strip()
+    if not job_id:
+        return jsonify({"status": "error", "reason": "job query-param required"}), 400
+
+    result = _tf_get_result(job_id)
+    if result is None:
+        return jsonify({"status": "pending", "job_id": job_id})
+
+    return jsonify({"status": "done", "job_id": job_id, "result": result})

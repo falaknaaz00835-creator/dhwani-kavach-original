@@ -12,3 +12,5 @@ index_wrong_file_backup.html
 nulecho
 .vscode/
 static/index_internal_trophy.html
+# ── Secrets — NEVER commit .env ──────────────────────────────────────────────
+.env
